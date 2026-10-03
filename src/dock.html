@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stream Relay Controls</title><link rel="stylesheet" href="/dock.css"><script src="/dock.js" defer></script></head>
+<body><main>
+<header><span class="mark" aria-hidden="true">⬡</span><div><h1>Stream Relay</h1><p class="subtitle">Your broadcast controls</p></div><span class="version">0.2.5</span></header>
+<p id="notice" role="status" aria-live="polite">Connecting to controls…</p>
+<form id="login" hidden>
+<label for="identity">Streamer ID</label><input id="identity" autocomplete="username" placeholder="streamer1" pattern="[A-Za-z0-9_-]{1,32}" required maxlength="32">
+<label for="token">Control token</label><input id="token" type="password" autocomplete="off" required maxlength="64" placeholder="Your private control token">
+<p class="hint">Use the control token your server owner gave you, not your streaming key.</p>
+<button type="submit" id="signin">Connect controls</button>
+</form>
+<section id="panel" hidden>
+<div class="identity"><strong id="who"></strong><button id="logout" class="text" type="button">Sign out</button></div>
+<div class="status-card"><span id="badge" class="badge">Checking</span><h2 id="state">Checking broadcast</h2><p id="detail"></p><p id="timer" class="hint"></p></div>
+<div class="feature-controls">
+<button id="pip" class="secondary" type="button" disabled>Picture-in-picture</button>
+<button id="collab" class="secondary" type="button" disabled>Collab fallback</button>
+<p class="hint">These switches affect only your outgoing broadcast. Settings are remembered.</p>
+<button id="refresh" class="text" type="button">Refresh status</button>
+</div>
+<button id="end" class="danger" type="button" disabled>End my broadcast</button>
+<p class="hint">Ends your broadcast and blocks reconnection. Other streamers stay live. Then click Stop Streaming in OBS.</p>
+<button id="allow" class="secondary" type="button" disabled>Allow my next broadcast</button>
+<p class="hint">Allows OBS to connect again. If OBS is reconnecting, your broadcast may start immediately.</p>
+</section>
+<footer>Closing this dock does not end your broadcast.</footer>
+</main></body></html>

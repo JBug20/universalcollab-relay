@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {PortalStore} from '../src/portal-store.mjs';import {createPortalServer} from '../src/portal-server.mjs';
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'portal-test-'));let active=false,api;
+const status=id=>({id,state:'ready',held:false,broadcast:false,pictureInPicture:true,collabFallback:true});
+try{
+ const store=new PortalStore({directory:dir});
+ assert.throws(()=>store.register('alice','wrong'));
+ const alice=store.register('alice',store.joinPassword),bob=store.register('bob',store.joinPassword),eve=store.register('eve',store.joinPassword);
+ assert.throws(()=>store.register('ALICE',store.joinPassword));
+ assert(!store.authenticate('alice:'+bob.controlToken));assert.equal(store.authenticate('alice:'+alice.controlToken).id,'alice');
+ const video=store.request('alice','bob','video');
+ assert.throws(()=>store.respond('eve',video.id,'approve'));assert.throws(()=>store.settings('alice',{overlays:[{publisher:'bob',corner:'top-right'}],fallback:[]}));
+ store.respond('bob',video.id,'approve');assert(store.allowed('alice','bob','video'));assert(!store.allowed('bob','alice','video'));assert(!store.allowed('alice','bob','fallback'));
+ store.settings('alice',{overlays:[{publisher:'bob',corner:'top-right'}],fallback:[]});assert.equal(store.overlays('alice').length,1);
+ const fallback=store.request('alice','bob','fallback');store.respond('bob',fallback.id,'approve');store.settings('alice',{overlays:[{publisher:'bob',corner:'top-right'}],fallback:['bob']});
+ store.respond('bob',video.id,'revoke');assert.equal(store.overlays('alice').length,0);assert.deepEqual(store.fallback('alice'),['bob']);
+ assert.throws(()=>store.settings('alice',{overlays:[],fallback:['eve']}));
+ store.setDestination('alice','rtmp://live.restream.io/live/event_one','');assert.equal(alice.destinationStreamKey,'event_one');
+ const restarted=new PortalStore({directory:dir});assert.equal(restarted.get('alice').inputKey,alice.inputKey);assert.equal(restarted.joinPassword,store.joinPassword);
+ const migrated=new PortalStore({directory:dir+'/legacy',publishers:[{id:'legacy',password:'a'.repeat(32),controlToken:'b'.repeat(32),inputKey:'c'.repeat(32),destinationBaseUrl:'rtmp://live.restream.io/live',destinationStreamKey:'old_event',overlays:[{publisher:'someone',corner:'top-left'}]}]});
+ assert.equal(migrated.get('legacy').controlToken,'b'.repeat(32));assert.equal(migrated.get('legacy').inputKey,'c'.repeat(32));assert.equal(migrated.get('legacy').destinationStreamKey,'old_event');assert.deepEqual(migrated.overlays('legacy'),[]);assert.deepEqual(restarted.fallback('alice'),['bob']);
+ const publicData=JSON.stringify(store.publicView('alice',status));for(const u of store.db.users)for(const v of [u.controlToken,u.password,u.inputKey,u.destinationStreamKey].filter(Boolean))assert(!publicData.includes(v));
+ api=await createPortalServer({config:{port:0,bind:'127.0.0.1',publicOrigin:''},store,status,action:async()=>{},changed:()=>{},busy:()=>active,validateDestination:async()=>{},rtmpPort:1935});
+ const origin='http://127.0.0.1:'+api.server.address().port;
+ const req=(route,body,who=alice,extra={})=>fetch(origin+route,{method:body===undefined?'GET':'POST',headers:{Origin:origin,Authorization:'Bearer '+who.id+':'+who.controlToken,'Content-Type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body)});
+ assert.equal((await req('/api/v3/view')).status,200);
+ const secrets=await (await req('/api/v3/secrets')).json();assert.equal(secrets.obsKey,alice.inputKey);assert.equal(secrets.obsServer,'rtmp://127.0.0.1:1935/live/alice');
+ assert.equal((await req('/api/v3/settings',{overlays:[],fallback:[]},alice,{Origin:'http://evil.test'})).status,403);
+ assert.equal((await req('/api/v3/respond',{id:fallback.id,decision:'revoke'},eve)).status,403);
+ active=true;assert.equal((await req('/api/v3/destination',{url:'rtmp://live.restream.io/live',key:'new'})).status,409);active=false;
+ assert.equal((await req('/api/v3/destination',{url:'rtmp://live.restream.io/live',key:'new'})).status,200);assert.equal(store.get('alice').inputKey,alice.inputKey);
+ assert.equal((await req('/api/v3/view',undefined,alice,{Authorization:'Bearer alice:'+bob.controlToken})).status,401);
+ assert.equal((await req('/api/v3/register',{username:'charlie',password:store.joinPassword})).status,200);
+ console.log('PASS registration, returning authentication, persistent keys, destination edit, approval direction, independent permissions, revocation, peer secret isolation, live-edit rejection and HTTP origins.');
+}finally{await api?.close();fs.rmSync(dir,{recursive:true,force:true});}

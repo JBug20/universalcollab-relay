@@ -1,0 +1,10 @@
+# Runtime config and data: never commit
+config.json
+data/
+recordings/
+vendor/mediamtx
+vendor/LICENSE
+*.pem
+*.key
+private-build-keys/
+node_modules/

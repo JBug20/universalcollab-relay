@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {hostFeatures} from '../src/host-features.mjs';
+import {PortalStore} from '../src/portal-store.mjs';
+import {createPortalServer} from '../src/portal-server.mjs';
+assert.deepEqual(hostFeatures(),{povLabels:true,manualFallback:true,fallbackTimeout:true,streamHealth:true,guestInvites:false,sessionPermissions:true,recordingManagement:true,multipleDestinations:true,recording:false,chatOverlays:true,registration:true,pictureInPicture:true,collaboratorFallback:true});
+assert.throws(()=>hostFeatures({hostFeatures:{pictureInPicture:'false'}}));
+assert.throws(()=>hostFeatures({hostFeatures:{typo:true}}));
+assert.equal(hostFeatures({multi:{collab:{enabled:false}}}).collaboratorFallback,false);
+assert.equal(hostFeatures({multi:{pictureInPicture:{enabled:false}}}).pictureInPicture,false);
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'host042-'));let api,config={hostFeatures:{}},actions=[];
+try{
+ const store=new PortalStore({directory:dir,features:()=>hostFeatures(config)});
+ const alice=store.register('alice',store.joinPassword),bob=store.register('bob',store.joinPassword);
+ const a=store.request('alice','bob','video'),b=store.request('alice','bob','fallback');
+ store.respond('bob',a.id,'approve');store.respond('bob',b.id,'approve');
+ store.settings('alice',{overlays:[{publisher:'bob',corner:'top-right'}],fallback:['bob']});
+ const saved=structuredClone(alice.settings),key=alice.inputKey;
+ config.hostFeatures={registration:false,pictureInPicture:false,collaboratorFallback:false};
+ assert.throws(()=>store.register('charlie',store.joinPassword));
+ assert.equal(store.authenticate('alice:'+alice.controlToken).id,'alice');
+ assert.deepEqual(store.overlays('alice'),[]);assert.deepEqual(store.fallback('alice'),[]);
+ assert.deepEqual(alice.settings,saved);assert.equal(alice.inputKey,key);
+ assert.throws(()=>store.request('alice','bob','video'));
+ assert.throws(()=>store.request('alice','bob','fallback'));
+ api=await createPortalServer({config:{port:0,bind:'127.0.0.1'},store,status:id=>({id,broadcast:false,state:'ready'}),action:async(_,a)=>actions.push(a),changed:()=>{},busy:()=>false,validateDestination:async()=>{},rtmpPort:1935});
+ const origin='http://127.0.0.1:'+api.server.address().port;
+ const req=(route,body)=>fetch(origin+route,{method:body===undefined?'GET':'POST',headers:{Origin:origin,Authorization:'Bearer alice:'+alice.controlToken,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+ assert.equal((await (await req('/api/v3/view')).json()).capabilities.pictureInPicture,false);
+ assert.equal((await (await req('/api/v3/info')).json()).capabilities.registration,false);
+ for(const route of ['pip-on','collab-on'])assert.equal((await req('/api/'+route,{})).status,403);
+ for(const route of ['end','allow','pip-off','collab-off'])assert.equal((await req('/api/'+route,{})).status,200);
+ assert.deepEqual(actions,['end','allow','pip-off','collab-off']);
+ assert.equal((await req('/api/v3/destination',{url:'rtmp://live.restream.io/live',key:'test'})).status,200);
+ // Can clear disabled settings and revoke approval, but cannot enable altered ones.
+ assert.equal((await req('/api/v3/settings',{...saved,overlays:[{publisher:'bob',corner:'bottom-left'}]})).status,403);
+ assert.equal((await req('/api/v3/settings',saved)).status,200);
+ config.hostFeatures={};assert.equal(store.overlays('alice').length,1);assert.deepEqual(store.fallback('alice'),['bob']);
+ config.hostFeatures.pictureInPicture=false;
+ store.respond('bob',a.id,'revoke');assert.throws(()=>store.respond('bob',a.id,'approve'));
+ assert.equal((await req('/api/v3/settings',{overlays:[],fallback:[]})).status,200);
+ console.log('PASS host limits enforced by API and feed selection, old config defaults, disabled legacy switches, preserved preferences/keys, revocation and independent destination/end controls.');
+}finally{await api?.close();fs.rmSync(dir,{recursive:true,force:true});}
